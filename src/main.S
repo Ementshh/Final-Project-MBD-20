@@ -385,13 +385,24 @@ i2c_transmit:
     ret
 
 lcd_send_nibble:
-    ; Data ada di bit 7-4, r24 bit 0=RS, bit 3 adalah Backlight. Bit 2 adalah EN.
+    ; FASE 1 (SETUP): Kirim Data, pastikan pin EN = 0 (Mati), BL = 1 (Nyala)
     push r24
-    ori r24, 0x0C  ; EN = 1, Backlight = 1
+    ori r24, 0x08          ; Bit 3(BL)=1, Bit 2(EN)=0
     rcall i2c_transmit
+    rcall delay_debounce   ; JEDA PAKSA agar pin data stabil
+
+    ; FASE 2 (PULSE): Naikkan pin EN = 1 (Data tetap sama)
     pop r24
-    ori r24, 0x08  ; EN = 0, Backlight = 1
+    push r24
+    ori r24, 0x0C          ; Bit 3(BL)=1, Bit 2(EN)=1
     rcall i2c_transmit
+    rcall delay_debounce   ; JEDA PAKSA agar LCD mendeteksi sinyal HIGH
+
+    ; FASE 3 (HOLD): Turunkan kembali pin EN = 0
+    pop r24
+    ori r24, 0x08          ; Bit 3(BL)=1, Bit 2(EN)=0
+    rcall i2c_transmit
+    rcall delay_debounce   ; JEDA PAKSA penutup
     ret
 
 lcd_command:
