@@ -5,8 +5,9 @@
 #define MOSI_PIN 3
 #define MISO_PIN 4
 #define SCK_PIN  5
-#define IND_PIN  0  // Pin 8 (Indikator LED Status)
-#define PWM_PIN  1  // Pin 9 (Servo)
+#define IND_PIN  0      // Pin 8 (Indikator LED Status)
+#define PWM_PIN  1      // Pin 9 (Servo)
+#define BLINK_PIN 7     // Pin 7 (LED Mesin Mati)
 
 #define ST_LOCKED 0     // State Terkunci
 #define ST_STOP   1     // State Berhenti (Unlocked)
@@ -73,7 +74,9 @@ main:
     out DDRB, r16
     sbi PORTB, SS_PIN       
     cbi DDRD, DDD2          
-    sbi PORTD, PORTD2       
+    sbi PORTD, PORTD2
+    sbi DDRD, DDD7
+    cbi PORTD, BLINK_PIN
 
     ldi r16, (1<<SPE)|(1<<MSTR)|(1<<SPR0)
     out SPCR, r16
@@ -155,7 +158,8 @@ handle_locked:
     rcall lcd_print_string
 
 hl_skip_print:
-    cbi PORTB, IND_PIN      
+    cbi PORTB, IND_PIN
+    cbi PORTD, BLINK_PIN      
     rcall set_servo_zero    
     rcall check_card_present
     cpi r24, 0
@@ -213,7 +217,8 @@ handle_stop:
     rcall lcd_print_string
 
 hs_skip_print:
-    sbi PORTB, IND_PIN      
+    sbi PORTB, IND_PIN
+    sbi PORTD, BLINK_PIN      
     rcall set_servo_zero
     
     rcall check_card_present
@@ -256,6 +261,7 @@ handle_drive:
     rcall lcd_print_string
 
 hd_skip_print:
+    cbi PORTD, BLINK_PIN
     lds r16, ADCSRA
     ori r16, (1<<ADSC)
     sts ADCSRA, r16
