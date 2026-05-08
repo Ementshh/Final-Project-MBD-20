@@ -9,14 +9,14 @@
 #define PWM_PIN  1  // Pin 9 (Servo)
 
 #define ST_LOCKED 0     // State Terkunci
-#define ST_STOP   1     // State Berhenti (Unlocked atau tidak terkunci)
+#define ST_STOP   1     // State Berhenti (Unlocked)
 #define ST_DRIVE  2     // State Mengemudi
 #define ST_BRAKE  3     // State Mengerem
 
 #define sys_state  r18
 #define speed_val  r19
 #define print_tmr  r23  // Timer agar print gas tidak terlalu nge-spam
-#define prev_state r26  // FIX: Menggunakan r26 (Aman dari error register di atas 15)
+#define prev_state r26  // FIX: Menggunakan r26 
 
 .global main
 .global __vector_1
@@ -111,7 +111,7 @@ main:
     ldi r16, (1<<INT0)      
     out EIMSK, r16
 
-    ; Inisialisasi LCD
+    // Inisialisasi LCD
     rcall lcd_init
 
     ldi sys_state, ST_LOCKED
@@ -143,12 +143,12 @@ handle_locked:
     ldi r16, ST_LOCKED
     mov prev_state, r16         
     
-    ; Output UART
+    // UART
     ldi ZH, hi8(msg_locked)
     ldi ZL, lo8(msg_locked)
     rcall uart_send_string
     
-    ; Output LCD
+    // LCD
     rcall lcd_clear
     ldi ZH, hi8(lcd_msg_locked)
     ldi ZL, lo8(lcd_msg_locked)
@@ -163,7 +163,7 @@ hl_skip_print:
     brne hl_card_detected
     rjmp fsm_loop       
 
-hl_card_detected:    
+hl_card_detected:   
     ldi r16, 0x01
     mov r2, r16
     ldi r16, 0x02
@@ -184,7 +184,7 @@ wait_lepas_1:
     rcall delay_debounce        
     rcall check_card_present
     cpi r24, 0
-    brne wait_lepas_1          
+    brne wait_lepas_1  
 
     rcall delay_1sec
     rjmp fsm_loop
@@ -196,19 +196,17 @@ handle_stop:
     ldi r16, ST_STOP
     mov prev_state, r16
     
-    ; Output UART
     ldi ZH, hi8(msg_unlocked)
     ldi ZL, lo8(msg_unlocked)
     rcall uart_send_string
     
-    ; Output LCD
     rcall lcd_clear
     ldi ZH, hi8(lcd_msg_stop1)
     ldi ZL, lo8(lcd_msg_stop1)
     rcall lcd_print_string
     
-    ldi r24, 0        ; Kolom 0
-    ldi r25, 1        ; Baris 1 (Bawah)
+    ldi r24, 0
+    ldi r25, 1
     rcall lcd_set_cursor
     ldi ZH, hi8(lcd_msg_stop2)
     ldi ZL, lo8(lcd_msg_stop2)
@@ -261,7 +259,6 @@ hd_skip_print:
     lds r16, ADCSRA
     ori r16, (1<<ADSC)
     sts ADCSRA, r16
-
 wait_adc:
     lds r16, ADCSRA
     sbrc r16, ADSC
@@ -279,13 +276,24 @@ wait_adc:
     inc print_tmr
     brne check_safety       
     
-    ; Output UART
     ldi ZH, hi8(msg_speed)
     ldi ZL, lo8(msg_speed)
     rcall uart_send_string  
     mov r24, speed_val
     rcall uart_send_number  
     rcall uart_send_newline 
+    
+    ldi r24, 0
+    ldi r25, 1
+    rcall lcd_set_cursor
+    ldi ZH, hi8(lcd_msg_speed)
+    ldi ZL, lo8(lcd_msg_speed)
+    rcall lcd_print_string
+    mov r24, speed_val
+    rcall lcd_print_number
+    ldi r24, ' '
+    rcall lcd_data
+    rcall lcd_data
 
 check_safety:
     cpi speed_val, 200      // Jika gas >= 200, nyalakan safety measure    
@@ -297,7 +305,7 @@ trigger_brake:
     ldi sys_state, ST_BRAKE
     rjmp fsm_loop
 
-// STATE 3: Pengereman Darurat (Auto Override & I2C Warning)
+// STATE 3: Pengereman Darurat (Auto Override & LCD Warning)
 handle_brake:
     cpi prev_state, ST_BRAKE
     breq hb_gradual_start
@@ -305,12 +313,10 @@ handle_brake:
     ldi r16, ST_BRAKE
     mov prev_state, r16
     
-    ; Output UART
     ldi ZH, hi8(msg_brake)
     ldi ZL, lo8(msg_brake)
     rcall uart_send_string
     
-    ; Output LCD
     rcall lcd_clear
     ldi ZH, hi8(lcd_msg_warn1)
     ldi ZL, lo8(lcd_msg_warn1)
@@ -321,7 +327,6 @@ handle_brake:
     ldi ZH, hi8(lcd_msg_warn2)
     ldi ZL, lo8(lcd_msg_warn2)
     rcall lcd_print_string
-
 
 hb_gradual_start:
     cpi speed_val, 50
@@ -350,7 +355,6 @@ hb_gradual_start:
 
 end_braking:
     rcall delay_1sec
-    
     ldi sys_state, ST_DRIVE
     rjmp fsm_loop
 
@@ -383,10 +387,9 @@ wait_i2c_write:
     ret
 
 i2c_transmit:
-    ; Mengirim byte yang ada di r24 ke alamat LCD (0x27 shifted = 0x4E)
     push r24
     rcall i2c_start
-    ldi r24, 0x4E  ; Address PCF8574 write
+    ldi r24, 0x4E
     rcall i2c_write
     pop r24
     rcall i2c_write
@@ -394,24 +397,21 @@ i2c_transmit:
     ret
 
 lcd_send_nibble:
-    ; FASE 1 (SETUP): Kirim Data, pastikan pin EN = 0 (Mati), BL = 1 (Nyala)
     push r24
-    ori r24, 0x08          ; Bit 3(BL)=1, Bit 2(EN)=0
+    ori r24, 0x08
     rcall i2c_transmit
-    rcall delay_debounce   ; JEDA PAKSA agar pin data stabil
+    rcall delay_lcd   
 
-    ; FASE 2 (PULSE): Naikkan pin EN = 1 (Data tetap sama)
     pop r24
     push r24
-    ori r24, 0x0C          ; Bit 3(BL)=1, Bit 2(EN)=1
+    ori r24, 0x0C
     rcall i2c_transmit
-    rcall delay_debounce   ; JEDA PAKSA agar LCD mendeteksi sinyal HIGH
+    rcall delay_lcd   
 
-    ; FASE 3 (HOLD): Turunkan kembali pin EN = 0
     pop r24
-    ori r24, 0x08          ; Bit 3(BL)=1, Bit 2(EN)=0
+    ori r24, 0x08
     rcall i2c_transmit
-    rcall delay_debounce   ; JEDA PAKSA penutup
+    rcall delay_lcd   
     ret
 
 lcd_command:
@@ -422,7 +422,7 @@ lcd_command:
     swap r24
     andi r24, 0xF0
     rcall lcd_send_nibble
-    rcall delay_debounce
+    rcall delay_lcd
     ret
 
 lcd_data:
@@ -458,14 +458,14 @@ lcd_init:
     
     ldi r24, 0x28
     rcall lcd_command
-    ldi r24, 0x0C          ; Nyalakan layar, matikan kursor
+    ldi r24, 0x0C          // Nyalakan layar, matikan kursor
     rcall lcd_command
-    ldi r24, 0x06          ; Auto-increment kursor dari kiri ke kanan
+    ldi r24, 0x06          // Auto-increment kursor dari kiri ke kanan
     rcall lcd_command
-    ldi r24, 0x01          ; Bersihkan sisa memori layar
+    ldi r24, 0x01          // Bersihkan sisa memori layar
     rcall lcd_command
     
-    rcall delay_1sec       ; Beri waktu LCD mengeksekusi clear display
+    rcall delay_1sec       
     ret
 
 lcd_clear:
@@ -474,7 +474,6 @@ lcd_clear:
     ret
 
 lcd_set_cursor:
-    ; r24 = Col (0-15), r25 = Row (0-1)
     cpi r25, 0
     breq lsc_row0
     ldi r25, 0x40
@@ -530,7 +529,6 @@ lcd_get_10:
 
 // ============================================
 // DRIVER SERIAL UART
-
 
 uart_send:
     lds r16, UCSR0A
@@ -591,7 +589,6 @@ get_10:
     pop r25
     pop r24
     ret
-
 
 // Arithmetic & Actuator
 
@@ -731,7 +728,7 @@ db_in:
     pop r21
     pop r20
     ret
-    
+
 delay_rfid:
     push r20
     push r21
@@ -745,6 +742,15 @@ dr_in:
     brne dr_out
     pop r21
     pop r20
+    ret
+
+delay_lcd:
+    push r16
+    ldi r16, 255
+dl_loop:
+    dec r16
+    brne dl_loop
+    pop r16
     ret
 
 msg_locked:     .asciz "=> STATUS: SYSTEM LOCKED\r\n"
