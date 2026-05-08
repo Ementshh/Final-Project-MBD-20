@@ -261,6 +261,7 @@ hd_skip_print:
     lds r16, ADCSRA
     ori r16, (1<<ADSC)
     sts ADCSRA, r16
+
 wait_adc:
     lds r16, ADCSRA
     sbrc r16, ADSC
@@ -285,20 +286,6 @@ wait_adc:
     mov r24, speed_val
     rcall uart_send_number  
     rcall uart_send_newline 
-    
-    ; Output LCD
-    ldi r24, 0        ; Kolom 0
-    ldi r25, 1        ; Baris 1
-    rcall lcd_set_cursor
-    ldi ZH, hi8(lcd_msg_speed)
-    ldi ZL, lo8(lcd_msg_speed)
-    rcall lcd_print_string
-    mov r24, speed_val
-    rcall lcd_print_number
-    ; Menghapus sisa angka jika turun dari 3 digit ke 2/1 digit
-    ldi r24, ' '
-    rcall lcd_data
-    rcall lcd_data
 
 check_safety:
     cpi speed_val, 200      // Jika gas >= 200, nyalakan safety measure    
