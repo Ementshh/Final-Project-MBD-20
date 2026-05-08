@@ -8,10 +8,10 @@
 #define IND_PIN  0  // Pin 8 (Indikator LED Status)
 #define PWM_PIN  1  // Pin 9 (Servo)
 
-#define ST_LOCKED 0
-#define ST_STOP   1
-#define ST_DRIVE  2
-#define ST_BRAKE  3
+#define ST_LOCKED 0     // State Terkunci
+#define ST_STOP   1     // State Berhenti (Unlocked atau tidak terkunci)
+#define ST_DRIVE  2     // State Mengemudi
+#define ST_BRAKE  3     // State Mengerem
 
 #define sys_state  r18
 #define speed_val  r19
@@ -261,20 +261,41 @@ trigger_brake:
 // STATE 3: Pengereman Darurat (Auto Override & I2C Warning)
 handle_brake:
     cpi prev_state, ST_BRAKE
-    breq hb_skip_print
+    breq hb_gradual_start
+    
     ldi r16, ST_BRAKE
     mov prev_state, r16
+    
     ldi ZH, hi8(msg_brake)
     ldi ZL, lo8(msg_brake)
     rcall uart_send_string
-hb_skip_print:
 
-    rcall set_servo_zero
-    
-    ldi r24, 'W'
-    rcall uart_send
-    
-    rcall delay_1sec
+hb_gradual_start:
+    cpi speed_val, 50
+    brlo end_braking        // Jika speed_val < 50, berhenti brake
+
+    subi speed_val, 3       
+
+    mov r16, speed_val
+    ldi r17, 250
+    add r16, r17            
+    clr r17
+    adc r17, r17            
+    sts OCR1AH, r17
+    sts OCR1AL, r16
+
+    ldi ZH, hi8(msg_speed)
+    ldi ZL, lo8(msg_speed)
+    rcall uart_send_string  
+    mov r24, speed_val
+    rcall uart_send_number  
+    rcall uart_send_newline
+
+    rcall delay_debounce    
+
+    rjmp fsm_loop           
+
+end_braking:
     rcall delay_1sec
     
     ldi sys_state, ST_DRIVE
