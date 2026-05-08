@@ -18,7 +18,6 @@
 #define print_tmr  r23  // Timer agar print gas tidak terlalu nge-spam
 #define prev_state r26  // FIX: Menggunakan r26 (Aman dari error register di atas 15)
 
-
 .global main
 .global __vector_1
 
@@ -104,13 +103,16 @@ main:
     ldi r16, (1<<TXEN0)     
     sts UCSR0B, r16
 
-    ldi r16, 72             
+    ldi r16, 72
     sts TWBR, r16
 
     ldi r16, (1<<ISC01)     
     sts EICRA, r16
     ldi r16, (1<<INT0)      
     out EIMSK, r16
+
+    ; Inisialisasi LCD
+    rcall lcd_init
 
     ldi sys_state, ST_LOCKED
     sei                     
@@ -140,17 +142,28 @@ handle_locked:
     breq hl_skip_print          
     ldi r16, ST_LOCKED
     mov prev_state, r16         
+    
+    ; Output UART
     ldi ZH, hi8(msg_locked)
     ldi ZL, lo8(msg_locked)
     rcall uart_send_string
-hl_skip_print:
+    
+    ; Output LCD
+    rcall lcd_clear
+    ldi ZH, hi8(lcd_msg_locked)
+    ldi ZL, lo8(lcd_msg_locked)
+    rcall lcd_print_string
 
+hl_skip_print:
     cbi PORTB, IND_PIN      
     rcall set_servo_zero    
     rcall check_card_present
     cpi r24, 0
-    breq fsm_loop           
-    
+
+    brne hl_card_detected
+    rjmp fsm_loop       
+
+hl_card_detected:    
     ldi r16, 0x01
     mov r2, r16
     ldi r16, 0x02
@@ -173,7 +186,6 @@ wait_lepas_1:
     cpi r24, 0
     brne wait_lepas_1          
 
-
     rcall delay_1sec
     rjmp fsm_loop
 
@@ -183,17 +195,36 @@ handle_stop:
     breq hs_skip_print
     ldi r16, ST_STOP
     mov prev_state, r16
+    
+    ; Output UART
     ldi ZH, hi8(msg_unlocked)
     ldi ZL, lo8(msg_unlocked)
     rcall uart_send_string
-hs_skip_print:
+    
+    ; Output LCD
+    rcall lcd_clear
+    ldi ZH, hi8(lcd_msg_stop1)
+    ldi ZL, lo8(lcd_msg_stop1)
+    rcall lcd_print_string
+    
+    ldi r24, 0        ; Kolom 0
+    ldi r25, 1        ; Baris 1 (Bawah)
+    rcall lcd_set_cursor
+    ldi ZH, hi8(lcd_msg_stop2)
+    ldi ZL, lo8(lcd_msg_stop2)
+    rcall lcd_print_string
 
+hs_skip_print:
     sbi PORTB, IND_PIN      
     rcall set_servo_zero
     
     rcall check_card_present
     cpi r24, 0
-    breq fsm_loop
+
+    brne hs_card_detected
+    rjmp fsm_loop
+
+hs_card_detected:
     ldi sys_state, ST_LOCKED 
 
 wait_lepas_2:               
@@ -216,11 +247,17 @@ handle_drive:
     breq hd_skip_print
     ldi r16, ST_DRIVE
     mov prev_state, r16
+    
     ldi ZH, hi8(msg_drive)
     ldi ZL, lo8(msg_drive)
     rcall uart_send_string
-hd_skip_print:
+    
+    rcall lcd_clear
+    ldi ZH, hi8(lcd_msg_drive)
+    ldi ZL, lo8(lcd_msg_drive)
+    rcall lcd_print_string
 
+hd_skip_print:
     lds r16, ADCSRA
     ori r16, (1<<ADSC)
     sts ADCSRA, r16
@@ -241,12 +278,27 @@ wait_adc:
     inc print_tmr
     brne check_safety       
     
+    ; Output UART
     ldi ZH, hi8(msg_speed)
     ldi ZL, lo8(msg_speed)
     rcall uart_send_string  
     mov r24, speed_val
     rcall uart_send_number  
     rcall uart_send_newline 
+    
+    ; Output LCD
+    ldi r24, 0        ; Kolom 0
+    ldi r25, 1        ; Baris 1
+    rcall lcd_set_cursor
+    ldi ZH, hi8(lcd_msg_speed)
+    ldi ZL, lo8(lcd_msg_speed)
+    rcall lcd_print_string
+    mov r24, speed_val
+    rcall lcd_print_number
+    ; Menghapus sisa angka jika turun dari 3 digit ke 2/1 digit
+    ldi r24, ' '
+    rcall lcd_data
+    rcall lcd_data
 
 check_safety:
     cpi speed_val, 200      // Jika gas >= 200, nyalakan safety measure    
@@ -264,13 +316,26 @@ handle_brake:
     breq hb_skip_print
     ldi r16, ST_BRAKE
     mov prev_state, r16
+    
+    ; Output UART
     ldi ZH, hi8(msg_brake)
     ldi ZL, lo8(msg_brake)
     rcall uart_send_string
-hb_skip_print:
-
-    rcall set_servo_zero
     
+    ; Output LCD
+    rcall lcd_clear
+    ldi ZH, hi8(lcd_msg_warn1)
+    ldi ZL, lo8(lcd_msg_warn1)
+    rcall lcd_print_string
+    ldi r24, 0
+    ldi r25, 1
+    rcall lcd_set_cursor
+    ldi ZH, hi8(lcd_msg_warn2)
+    ldi ZL, lo8(lcd_msg_warn2)
+    rcall lcd_print_string
+
+hb_skip_print:
+    rcall set_servo_zero
     ldi r24, 'W'
     rcall uart_send
     
@@ -280,7 +345,158 @@ hb_skip_print:
     ldi sys_state, ST_DRIVE
     rjmp fsm_loop
 
-// Driver Serial UART (text dan angka)
+
+
+// DRIVER I2C & LCD 1602 PCF8574
+
+i2c_start:
+    ldi r16, (1<<TWINT)|(1<<TWSTA)|(1<<TWEN)
+    sts TWCR, r16
+wait_i2c_start:
+    lds r16, TWCR
+    sbrs r16, TWINT
+    rjmp wait_i2c_start
+    ret
+
+i2c_stop:
+    ldi r16, (1<<TWINT)|(1<<TWSTO)|(1<<TWEN)
+    sts TWCR, r16
+    ret
+
+i2c_write:
+    sts TWDR, r24
+    ldi r16, (1<<TWINT)|(1<<TWEN)
+    sts TWCR, r16
+wait_i2c_write:
+    lds r16, TWCR
+    sbrs r16, TWINT
+    rjmp wait_i2c_write
+    ret
+
+i2c_transmit:
+    ; Mengirim byte yang ada di r24 ke alamat LCD (0x27 shifted = 0x4E)
+    push r24
+    rcall i2c_start
+    ldi r24, 0x4E  ; Address PCF8574 write
+    rcall i2c_write
+    pop r24
+    rcall i2c_write
+    rcall i2c_stop
+    ret
+
+lcd_send_nibble:
+    ; Data ada di bit 7-4, r24 bit 0=RS, bit 3 adalah Backlight. Bit 2 adalah EN.
+    push r24
+    ori r24, 0x0C  ; EN = 1, Backlight = 1
+    rcall i2c_transmit
+    pop r24
+    ori r24, 0x08  ; EN = 0, Backlight = 1
+    rcall i2c_transmit
+    ret
+
+lcd_command:
+    push r24
+    andi r24, 0xF0
+    rcall lcd_send_nibble
+    pop r24
+    swap r24
+    andi r24, 0xF0
+    rcall lcd_send_nibble
+    rcall delay_debounce
+    ret
+
+lcd_data:
+    push r24
+    andi r24, 0xF0
+    ori r24, 0x01
+    rcall lcd_send_nibble
+    pop r24
+    swap r24
+    andi r24, 0xF0
+    ori r24, 0x01
+    rcall lcd_send_nibble
+    ret
+
+lcd_init:
+    rcall delay_1sec
+    ldi r24, 0x30
+    rcall lcd_command
+    ldi r24, 0x30
+    rcall lcd_command
+    ldi r24, 0x32
+    rcall lcd_command
+    ldi r24, 0x28
+    rcall lcd_command
+    ldi r24, 0x0C
+    rcall lcd_command
+    ldi r24, 0x01
+    rcall lcd_command
+    ret
+
+lcd_clear:
+    ldi r24, 0x01
+    rcall lcd_command
+    ret
+
+lcd_set_cursor:
+    ; r24 = Col (0-15), r25 = Row (0-1)
+    cpi r25, 0
+    breq lsc_row0
+    ldi r25, 0x40
+    add r24, r25
+lsc_row0:
+    ori r24, 0x80
+    rcall lcd_command
+    ret
+
+lcd_print_string:
+lps_loop:
+    lpm r24, Z+
+    cpi r24, 0
+    breq lps_done
+    rcall lcd_data
+    rjmp lps_loop
+lps_done:
+    ret
+
+lcd_print_number:
+    push r24
+    push r25
+    
+    ldi r25, '0'-1          
+lcd_get_100:
+    inc r25
+    subi r24, 100
+    brcc lcd_get_100
+    subi r24, -100
+    push r24
+    mov r24, r25
+    rcall lcd_data
+    
+    pop r24
+    ldi r25, '0'-1          
+lcd_get_10:
+    inc r25
+    subi r24, 10
+    brcc lcd_get_10
+    subi r24, -10
+    push r24
+    mov r24, r25
+    rcall lcd_data
+    
+    pop r24
+    ldi r25, '0'            
+    add r24, r25
+    rcall lcd_data
+    
+    pop r25
+    pop r24
+    ret
+
+// ============================================
+// DRIVER SERIAL UART
+
+
 uart_send:
     lds r16, UCSR0A
     sbrs r16, UDRE0         
@@ -314,7 +530,6 @@ uart_send_newline:
 uart_send_number:
     push r24
     push r25
-    
     ldi r25, '0'-1          
 get_100:
     inc r25
@@ -324,7 +539,6 @@ get_100:
     push r24
     mov r24, r25
     rcall uart_send
-    
     pop r24
     ldi r25, '0'-1          
 get_10:
@@ -335,17 +549,17 @@ get_10:
     push r24
     mov r24, r25
     rcall uart_send
-    
     pop r24
     ldi r25, '0'            
     add r24, r25
     rcall uart_send
-    
     pop r25
     pop r24
     ret
 
+
 // Arithmetic & Actuator
+
 set_servo_zero:
     ldi r16, 0x00
     sts OCR1AH, r16
@@ -357,19 +571,15 @@ authenticate_uid:
     ldi r16, 0x01
     cp r2, r16
     brne auth_fail
-    
     ldi r16, 0x02
     cp r3, r16
     brne auth_fail
-
     ldi r16, 0x03
     cp r4, r16
     brne auth_fail
-
     ldi r16, 0x04
     cp r5, r16
     brne auth_fail
-    
     ldi sys_state, ST_STOP  
 auth_fail:
     ret
@@ -378,28 +588,22 @@ check_card_present:
     ldi r24, 0x0A 
     ldi r22, 0x80 
     call rc522_write_reg
-    
     ldi r24, 0x09 
     ldi r22, 0x26 
     call rc522_write_reg
-    
     ldi r24, 0x0D 
     ldi r22, 0x07 
     call rc522_write_reg
-    
     ldi r24, 0x01 
     ldi r22, 0x0C 
     call rc522_write_reg
-    
     ldi r24, 0x0D 
     call rc522_read_reg 
     ori r24, 0x80 
     mov r22, r24 
     ldi r24, 0x0D 
     call rc522_write_reg
-    
     call delay_debounce
-    
     ldi r24, 0x0A 
     call rc522_read_reg 
     ret
@@ -476,8 +680,16 @@ db_in:
     pop r20
     ret
 
-msg_locked:   .asciz "=> STATUS: SYSTEM LOCKED\r\n"
-msg_unlocked: .asciz "=> STATUS: UNLOCKED. (KLIK TOMBOL UNTUK START MESIN)\r\n"
-msg_drive:    .asciz "=> ENGINE: STARTED! VROOM!\r\n"
-msg_brake:    .asciz "=> WARNING: AUTO BRAKING ENGAGED!\r\n"
-msg_speed:    .asciz "GAS VAL: "
+msg_locked:     .asciz "=> STATUS: SYSTEM LOCKED\r\n"
+msg_unlocked:   .asciz "=> STATUS: UNLOCKED. (KLIK TOMBOL UNTUK START MESIN)\r\n"
+msg_drive:      .asciz "=> ENGINE: STARTED! VROOM!\r\n"
+msg_brake:      .asciz "=> WARNING: AUTO BRAKING ENGAGED!\r\n"
+msg_speed:      .asciz "GAS VAL: "
+
+lcd_msg_locked: .asciz "SYSTEM LOCKED"
+lcd_msg_stop1:  .asciz "ENGINE OFF"
+lcd_msg_stop2:  .asciz "PRESS BTN START"
+lcd_msg_drive:  .asciz "DRIVING MODE"
+lcd_msg_speed:  .asciz "SPEED: "
+lcd_msg_warn1:  .asciz "!! WARNING !!"
+lcd_msg_warn2:  .asciz "AUTO BRAKING"
