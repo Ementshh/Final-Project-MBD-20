@@ -375,33 +375,44 @@ auth_fail:
     ret
 
 check_card_present:
+    ldi r24, 0x04
+    ldi r22, 0x7F
+    rcall rc522_write_reg
+
     ldi r24, 0x0A 
     ldi r22, 0x80 
-    call rc522_write_reg
+    rcall rc522_write_reg
     
     ldi r24, 0x09 
     ldi r22, 0x26 
-    call rc522_write_reg
+    rcall rc522_write_reg
     
     ldi r24, 0x0D 
     ldi r22, 0x07 
-    call rc522_write_reg
-    
+    rcall rc522_write_reg
     ldi r24, 0x01 
     ldi r22, 0x0C 
-    call rc522_write_reg
+    rcall rc522_write_reg
     
     ldi r24, 0x0D 
-    call rc522_read_reg 
+    rcall rc522_read_reg 
     ori r24, 0x80 
     mov r22, r24 
     ldi r24, 0x0D 
-    call rc522_write_reg
+    rcall rc522_write_reg
     
-    call delay_debounce
+    rcall delay_rfid
     
     ldi r24, 0x0A 
-    call rc522_read_reg 
+    rcall rc522_read_reg 
+    
+    cpi r24, 2
+    breq card_is_valid
+    ldi r24, 0
+    ret
+
+card_is_valid:
+    ldi r24, 1
     ret
     
 rc522_write_reg:
@@ -472,6 +483,21 @@ db_in:
     dec r20
     brne db_out
     pop r22
+    pop r21
+    pop r20
+    ret
+
+delay_rfid:
+    push r20
+    push r21
+    ldi r20, 20
+dr_out:
+    ldi r21, 255
+dr_in:
+    dec r21
+    brne dr_in
+    dec r20
+    brne dr_out
     pop r21
     pop r20
     ret
