@@ -8,10 +8,10 @@
 #define IND_PIN  0  // Pin 8 (Indikator LED Status)
 #define PWM_PIN  1  // Pin 9 (Servo)
 
-#define ST_LOCKED 0
-#define ST_STOP   1
-#define ST_DRIVE  2
-#define ST_BRAKE  3
+#define ST_LOCKED 0     // State Terkunci
+#define ST_STOP   1     // State Berhenti (Unlocked atau tidak terkunci)
+#define ST_DRIVE  2     // State Mengemudi
+#define ST_BRAKE  3     // State Mengerem
 
 #define sys_state  r18
 #define speed_val  r19
@@ -300,7 +300,8 @@ trigger_brake:
 // STATE 3: Pengereman Darurat (Auto Override & I2C Warning)
 handle_brake:
     cpi prev_state, ST_BRAKE
-    breq hb_skip_print
+    breq hb_gradual_start
+    
     ldi r16, ST_BRAKE
     mov prev_state, r16
     
@@ -321,12 +322,33 @@ handle_brake:
     ldi ZL, lo8(lcd_msg_warn2)
     rcall lcd_print_string
 
-hb_skip_print:
-    rcall set_servo_zero
-    ldi r24, 'W'
-    rcall uart_send
-    
-    rcall delay_1sec
+
+hb_gradual_start:
+    cpi speed_val, 50
+    brlo end_braking        // Jika speed_val < 50, berhenti brake
+
+    subi speed_val, 3       
+
+    mov r16, speed_val
+    ldi r17, 250
+    add r16, r17            
+    clr r17
+    adc r17, r17            
+    sts OCR1AH, r17
+    sts OCR1AL, r16
+
+    ldi ZH, hi8(msg_speed)
+    ldi ZL, lo8(msg_speed)
+    rcall uart_send_string  
+    mov r24, speed_val
+    rcall uart_send_number  
+    rcall uart_send_newline
+
+    rcall delay_debounce    
+
+    rjmp fsm_loop           
+
+end_braking:
     rcall delay_1sec
     
     ldi sys_state, ST_DRIVE
@@ -598,27 +620,44 @@ auth_fail:
     ret
 
 check_card_present:
+    ldi r24, 0x04
+    ldi r22, 0x7F
+    rcall rc522_write_reg
+
     ldi r24, 0x0A 
     ldi r22, 0x80 
-    call rc522_write_reg
+    rcall rc522_write_reg
+    
     ldi r24, 0x09 
     ldi r22, 0x26 
-    call rc522_write_reg
+    rcall rc522_write_reg
+    
     ldi r24, 0x0D 
     ldi r22, 0x07 
-    call rc522_write_reg
+    rcall rc522_write_reg
     ldi r24, 0x01 
     ldi r22, 0x0C 
-    call rc522_write_reg
+    rcall rc522_write_reg
+    
     ldi r24, 0x0D 
-    call rc522_read_reg 
+    rcall rc522_read_reg 
     ori r24, 0x80 
     mov r22, r24 
     ldi r24, 0x0D 
-    call rc522_write_reg
-    call delay_debounce
+    rcall rc522_write_reg
+    
+    rcall delay_rfid
+    
     ldi r24, 0x0A 
-    call rc522_read_reg 
+    rcall rc522_read_reg 
+    
+    cpi r24, 2
+    breq card_is_valid
+    ldi r24, 0
+    ret
+
+card_is_valid:
+    ldi r24, 1
     ret
     
 rc522_write_reg:
@@ -689,6 +728,21 @@ db_in:
     dec r20
     brne db_out
     pop r22
+    pop r21
+    pop r20
+    ret
+    
+delay_rfid:
+    push r20
+    push r21
+    ldi r20, 20
+dr_out:
+    ldi r21, 255
+dr_in:
+    dec r21
+    brne dr_in
+    dec r20
+    brne dr_out
     pop r21
     pop r20
     ret
