@@ -418,19 +418,33 @@ lcd_data:
     ret
 
 lcd_init:
-    rcall delay_1sec
+    
     ldi r24, 0x30
-    rcall lcd_command
+    rcall lcd_send_nibble
+    rcall delay_debounce
+    
     ldi r24, 0x30
-    rcall lcd_command
-    ldi r24, 0x32
-    rcall lcd_command
+    rcall lcd_send_nibble
+    rcall delay_debounce
+    
+    ldi r24, 0x30
+    rcall lcd_send_nibble
+    rcall delay_debounce
+    
+    ldi r24, 0x20
+    rcall lcd_send_nibble
+    rcall delay_debounce
+    
     ldi r24, 0x28
     rcall lcd_command
-    ldi r24, 0x0C
+    ldi r24, 0x0C          ; Nyalakan layar, matikan kursor
     rcall lcd_command
-    ldi r24, 0x01
+    ldi r24, 0x06          ; Auto-increment kursor dari kiri ke kanan
     rcall lcd_command
+    ldi r24, 0x01          ; Bersihkan sisa memori layar
+    rcall lcd_command
+    
+    rcall delay_1sec       ; Beri waktu LCD mengeksekusi clear display
     ret
 
 lcd_clear:
