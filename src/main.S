@@ -168,27 +168,38 @@ hl_skip_print:
     rjmp fsm_loop       
 
 hl_card_detected:   
-    ldi r16, 0x01
-    mov r2, r16
-    ldi r16, 0x02
-    mov r3, r16
-    ldi r16, 0x03
-    mov r4, r16
-    ldi r16, 0x04
-    mov r5, r16
+    rcall read_card_uid
 
-    rcall authenticate_uid  
+    ldi ZH, hi8(msg_uid)
+    ldi ZL, lo8(msg_uid)
+    rcall uart_send_string
+    mov r24, r2
+    rcall uart_send_number
+    ldi r24, '-'
+    rcall uart_send
+    mov r24, r3
+    rcall uart_send_number
+    ldi r24, '-'
+    rcall uart_send
+    mov r24, r4
+    rcall uart_send_number
+    ldi r24, '-'
+    rcall uart_send
+    mov r24, r5
+    rcall uart_send_number
+    rcall uart_send_newline
+
+    rcall authenticate_uid
+    cpi r24, 1
+    brne wait_lepas_1
+    
+    ldi sys_state, ST_STOP
 
 wait_lepas_1:               
     rcall delay_debounce        
     rcall check_card_present
     cpi r24, 0
     brne wait_lepas_1           
-
-    rcall delay_debounce        
-    rcall check_card_present
-    cpi r24, 0
-    brne wait_lepas_1  
 
     rcall delay_1sec
     rjmp fsm_loop
@@ -228,14 +239,34 @@ hs_skip_print:
     rjmp fsm_loop
 
 hs_card_detected:
-    ldi sys_state, ST_LOCKED 
+    rcall read_card_uid
+
+    ldi ZH, hi8(msg_uid)
+    ldi ZL, lo8(msg_uid)
+    rcall uart_send_string
+    mov r24, r2
+    rcall uart_send_number
+    ldi r24, '-'
+    rcall uart_send
+    mov r24, r3
+    rcall uart_send_number
+    ldi r24, '-'
+    rcall uart_send
+    mov r24, r4
+    rcall uart_send_number
+    ldi r24, '-'
+    rcall uart_send
+    mov r24, r5
+    rcall uart_send_number
+    rcall uart_send_newline
+
+    rcall authenticate_uid
+    cpi r24, 1
+    brne wait_lepas_2
+    
+    ldi sys_state, ST_LOCKED
 
 wait_lepas_2:               
-    rcall delay_debounce
-    rcall check_card_present
-    cpi r24, 0
-    brne wait_lepas_2
-
     rcall delay_debounce
     rcall check_card_present
     cpi r24, 0
@@ -605,21 +636,36 @@ set_servo_zero:
     sts OCR1AL, r16
     ret
 
+// UID yang diizinkan adalah 1:3:4:0 (dalam desimal), di simulasi Wokwi UID ini adalah Blue Card
 authenticate_uid:
-    ldi r16, 0x01
+    ldi r24, 0
+    
+    ldi r16, 1
     cp r2, r16
     brne auth_fail
-    ldi r16, 0x02
+    ldi r16, 3
     cp r3, r16
     brne auth_fail
-    ldi r16, 0x03
+    ldi r16, 4
     cp r4, r16
     brne auth_fail
-    ldi r16, 0x04
+    ldi r16, 0
     cp r5, r16
     brne auth_fail
-    ldi sys_state, ST_STOP  
+    
+    ldi r24, 1
+    ret 
+
 auth_fail:
+    ldi ZH, hi8(msg_deny)
+    ldi ZL, lo8(msg_deny)
+    rcall uart_send_string
+    
+    rcall lcd_clear
+    ldi ZH, hi8(lcd_msg_deny)
+    ldi ZL, lo8(lcd_msg_deny)
+    rcall lcd_print_string
+    rcall uart_send_newline
     ret
 
 check_card_present:
@@ -657,6 +703,61 @@ check_card_present:
     cpi r24, 2
     breq card_is_valid
     ldi r24, 0
+    ret
+
+read_card_uid:
+    ldi r24, 0x04
+    ldi r22, 0x7F
+    rcall rc522_write_reg
+
+    ldi r24, 0x0A
+    ldi r22, 0x80
+    rcall rc522_write_reg
+
+    ldi r24, 0x09
+    ldi r22, 0x93
+    rcall rc522_write_reg
+    ldi r24, 0x09
+    ldi r22, 0x20
+    rcall rc522_write_reg
+
+    ldi r24, 0x0D
+    ldi r22, 0x00
+    rcall rc522_write_reg
+
+    ldi r24, 0x01
+    ldi r22, 0x0C
+    rcall rc522_write_reg
+
+    ldi r24, 0x0D
+    rcall rc522_read_reg
+    ori r24, 0x80
+    mov r22, r24
+    ldi r24, 0x0D
+    rcall rc522_write_reg
+
+    rcall delay_rfid
+
+    // Byte 1
+    ldi r24, 0x09 
+    rcall rc522_read_reg 
+    mov r2, r24
+
+    // Byte 2
+    ldi r24, 0x09 
+    rcall rc522_read_reg 
+    mov r3, r24
+
+    // Byte 3
+    ldi r24, 0x09 
+    rcall rc522_read_reg 
+    mov r4, r24
+
+    // Byte 4
+    ldi r24, 0x09 
+    rcall rc522_read_reg 
+    mov r5, r24
+    
     ret
 
 card_is_valid:
@@ -759,6 +860,8 @@ dl_loop:
     pop r16
     ret
 
+msg_uid:        .asciz "=> UID KARTU TERDETEKSI: "
+msg_deny:       .asciz "=> ACCESS DENIED"
 msg_locked:     .asciz "=> STATUS: SYSTEM LOCKED\r\n"
 msg_unlocked:   .asciz "=> STATUS: UNLOCKED. (KLIK TOMBOL UNTUK START MESIN)\r\n"
 msg_drive:      .asciz "=> ENGINE: STARTED! VROOM!\r\n"
@@ -766,6 +869,7 @@ msg_brake:      .asciz "=> WARNING: AUTO BRAKING ENGAGED!\r\n"
 msg_speed:      .asciz "GAS VAL: "
 
 lcd_msg_locked: .asciz "SYSTEM LOCKED"
+lcd_msg_deny:   .asciz "ACCESS DENIED"
 lcd_msg_stop1:  .asciz "ENGINE OFF"
 lcd_msg_stop2:  .asciz "PRESS BTN START"
 lcd_msg_drive:  .asciz "DRIVING MODE"
