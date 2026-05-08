@@ -418,6 +418,7 @@ lcd_data:
     ret
 
 lcd_init:
+    rcall delay_1sec
     
     ldi r24, 0x30
     rcall lcd_send_nibble
