@@ -80,6 +80,36 @@ main:
 
     ldi r16, (1<<SPE)|(1<<MSTR)|(1<<SPR0)
     out SPCR, r16
+
+    ldi r24, 0x01
+    ldi r22, 0x0F
+    rcall rc522_write_reg
+    rcall delay_1sec
+
+    ldi r24, 0x2A
+    ldi r22, 0x8D
+    rcall rc522_write_reg
+    
+    ldi r24, 0x2B
+    ldi r22, 0x3E
+    rcall rc522_write_reg
+    
+    ldi r24, 0x2C
+    ldi r22, 0x00
+    rcall rc522_write_reg
+    
+    ldi r24, 0x2D
+    ldi r22, 0x1E
+    rcall rc522_write_reg
+
+    ldi r24, 0x15
+    ldi r22, 0x40
+    rcall rc522_write_reg
+
+    ldi r24, 0x11
+    ldi r22, 0x3D
+    rcall rc522_write_reg
+
     ldi r24, 0x14           
     rcall rc522_read_reg
     ori r24, 0x03
@@ -195,11 +225,16 @@ hl_card_detected:
     
     ldi sys_state, ST_STOP
 
+init_lepas_1:
+    ldi r25, 20
 wait_lepas_1:               
-    rcall delay_debounce        
+    rcall delay_rfid
     rcall check_card_present
     cpi r24, 0
-    brne wait_lepas_1           
+    brne init_lepas_1
+
+    dec r25
+    brne wait_lepas_1
 
     rcall delay_1sec
     rjmp fsm_loop
@@ -266,10 +301,15 @@ hs_card_detected:
     
     ldi sys_state, ST_LOCKED
 
+init_lepas_2:
+    ldi r25, 20
 wait_lepas_2:               
-    rcall delay_debounce
+    rcall delay_rfid
     rcall check_card_present
     cpi r24, 0
+    brne init_lepas_2
+
+    dec r25
     brne wait_lepas_2
 
     rcall delay_1sec
@@ -636,20 +676,21 @@ set_servo_zero:
     sts OCR1AL, r16
     ret
 
-// UID yang diizinkan adalah 1:3:4:0 (dalam desimal), di simulasi Wokwi UID ini adalah Blue Card
+// UID yang diizinkan adalah 1:3:4:0 (dalam desimal), di simulasi Wokwi UID ini adalah Blue Card.
+// Dalam simulasi dunia nyatanya, kita ganti UID ini dengan UID yang terdaftar pada kartu yang kita pegang
 authenticate_uid:
     ldi r24, 0
     
-    ldi r16, 1
+    ldi r16, 1      // 57
     cp r2, r16
     brne auth_fail
-    ldi r16, 3
+    ldi r16, 3      // 55
     cp r3, r16
     brne auth_fail
-    ldi r16, 4
+    ldi r16, 4      // 99
     cp r4, r16
     brne auth_fail
-    ldi r16, 0
+    ldi r16, 0      // 18
     cp r5, r16
     brne auth_fail
     
@@ -742,16 +783,19 @@ read_card_uid:
     ldi r24, 0x09 
     rcall rc522_read_reg 
     mov r2, r24
+    rcall delay_debounce
 
     // Byte 2
     ldi r24, 0x09 
     rcall rc522_read_reg 
     mov r3, r24
+    rcall delay_debounce
 
     // Byte 3
     ldi r24, 0x09 
     rcall rc522_read_reg 
     mov r4, r24
+    rcall delay_debounce
 
     // Byte 4
     ldi r24, 0x09 
