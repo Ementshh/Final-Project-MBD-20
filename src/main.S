@@ -8,6 +8,7 @@
 #define IND_PIN  0      // Pin 8 (Indikator LED Status)
 #define PWM_PIN  1      // Pin 9 (Servo)
 #define BLINK_PIN 7     // Pin 7 (LED Mesin Mati)
+#define BUZZ_PIN 6      // Pin 6 (Active Buzzer)
 
 #define ST_LOCKED 0     // State Terkunci
 #define ST_STOP   1     // State Berhenti (Unlocked)
@@ -77,6 +78,8 @@ main:
     sbi PORTD, PORTD2
     sbi DDRD, DDD7
     cbi PORTD, BLINK_PIN
+    sbi DDRD, DDD6
+    cbi PORTD, BUZZ_PIN
 
     ldi r16, (1<<SPE)|(1<<MSTR)|(1<<SPR0)
     out SPCR, r16
@@ -548,6 +551,7 @@ lcd_init:
 lcd_clear:
     ldi r24, 0x01
     rcall lcd_command
+    rcall delay_debounce
     ret
 
 lcd_set_cursor:
@@ -693,6 +697,10 @@ authenticate_uid:
     ldi r16, 0      // 18
     cp r5, r16
     brne auth_fail
+
+    sbi PORTD, BUZZ_PIN
+    rcall delay_100ms
+    cbi PORTD, BUZZ_PIN
     
     ldi r24, 1
     ret 
@@ -701,12 +709,18 @@ auth_fail:
     ldi ZH, hi8(msg_deny)
     ldi ZL, lo8(msg_deny)
     rcall uart_send_string
+    rcall uart_send_newline
     
     rcall lcd_clear
     ldi ZH, hi8(lcd_msg_deny)
     ldi ZL, lo8(lcd_msg_deny)
     rcall lcd_print_string
-    rcall uart_send_newline
+
+    sbi PORTD, BUZZ_PIN
+    rcall delay_100ms
+    rcall delay_100ms
+    rcall delay_100ms
+    cbi PORTD, BUZZ_PIN
     ret
 
 check_card_present:
@@ -875,6 +889,27 @@ db_in:
     brne db_mid
     dec r20
     brne db_out
+    pop r22
+    pop r21
+    pop r20
+    ret
+
+delay_100ms:
+    push r20
+    push r21
+    push r22
+    ldi r20, 8
+d100_out:
+    ldi r21, 255
+d100_mid:
+    ldi r22, 255
+d100_in:
+    dec r22
+    brne d100_in
+    dec r21
+    brne d100_mid
+    dec r20
+    brne d100_out
     pop r22
     pop r21
     pop r20
